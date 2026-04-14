@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
@@ -27,7 +27,8 @@ import {
   Copy,
   Wallet,
   TrendingUp,
-  TrendingDown
+  TrendingDown,
+  Square
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -53,6 +54,7 @@ export default function TwilioChecker() {
   const [bulkInput, setBulkInput] = useState('');
   const [isChecking, setIsChecking] = useState(false);
   const [progress, setProgress] = useState(0);
+  const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     sessionStorage.setItem('twilio_accounts', JSON.stringify(accounts));
@@ -151,19 +153,31 @@ export default function TwilioChecker() {
       return;
     }
 
+    abortRef.current = new AbortController();
     setIsChecking(true);
     setProgress(0);
 
     for (let i = 0; i < pending.length; i++) {
+      if (abortRef.current.signal.aborted) break;
       await checkTwilio(pending[i]);
       setProgress(((i + 1) / pending.length) * 100);
     }
 
     setIsChecking(false);
+    abortRef.current = null;
     toast.success('Bulk check completed');
   };
 
+  const stopCheck = () => {
+    if (abortRef.current) {
+      abortRef.current.abort();
+      setIsChecking(false);
+      toast.info('Check stopped');
+    }
+  };
+
   const clearAll = () => {
+    stopCheck();
     setAccounts([]);
     sessionStorage.removeItem('twilio_accounts');
     toast.info('All accounts cleared');
@@ -311,6 +325,12 @@ export default function TwilioChecker() {
               {isChecking ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Play className="w-4 h-4 mr-2" />}
               Check All
             </Button>
+            {isChecking && (
+              <Button onClick={stopCheck} className="bg-red-600 hover:bg-red-700">
+                <Square className="w-4 h-4 mr-2" />
+                Stop
+              </Button>
+            )}
             <Button onClick={clearAll} variant="destructive">
               <Trash2 className="w-4 h-4 mr-2" />
               Clear All

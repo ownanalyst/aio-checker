@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
@@ -28,7 +28,8 @@ import {
   Key,
   AlertTriangle,
   Info,
-  Shield
+  Shield,
+  Square
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { STSClient, GetCallerIdentityCommand } from '@aws-sdk/client-sts';
@@ -66,6 +67,7 @@ export default function AWSCredentialChecker() {
   const [defaultRegion, setDefaultRegion] = useState('us-east-1');
   const [isChecking, setIsChecking] = useState(false);
   const [progress, setProgress] = useState(0);
+  const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     sessionStorage.setItem('aws_credentials', JSON.stringify(credentials));
@@ -124,98 +126,124 @@ export default function AWSCredentialChecker() {
     return err?.message || 'Authentication failed';
   };
 
-  const checkAWS = async (cred: AWSCredential) => {
+  const checkAWS = async (cred: AWSCredential, signal?: AbortSignal) => {
     setCredentials(prev =>
       prev.map(c => c.id === cred.id ? { ...c, status: 'checking' } : c)
     );
 
-    const clientConfig = {
-      region: cred.region,
-      credentials: {
-        accessKeyId: cred.accessKeyId,
-        secretAccessKey: cred.secretAccessKey,
-      },
-    };
+    // If region is explicitly set to 'auto' or empty, try regions sequentially
+    const tryRegions = cred.region === 'auto' ? regions : [cred.region];
 
-    try {
-      // Step 1: Validate credentials and get account identity
-      const stsClient = new STSClient(clientConfig);
-      const identity = await stsClient.send(new GetCallerIdentityCommand({}));
-      const accountId = identity.Account ?? 'Unknown';
-      const userArn = identity.Arn ?? '';
+    for (const region of tryRegions) {
+      if (signal?.aborted) return;
 
-      // Step 2: Try SES access (parallel)
-      let hasSESPolicy = false;
-      let sesLimits: AWSCredential['sesLimits'] = null;
-      let sesDomains: string[] | null = null;
+      const clientConfig = {
+        region,
+        credentials: {
+          accessKeyId: cred.accessKeyId,
+          secretAccessKey: cred.secretAccessKey,
+        },
+      };
 
-      // Step 3: Try IAM access (parallel)
-      let hasIAMPolicy = false;
-      let iamUsers: string[] = [];
+      try {
+        const stsClient = new STSClient(clientConfig);
+        const identity = await stsClient.send(new GetCallerIdentityCommand({}), { abortSignal: signal });
+        const accountId = identity.Account ?? 'Unknown';
+        const userArn = identity.Arn ?? '';
 
-      const [sesResult, iamResult] = await Promise.allSettled([
-        (async () => {
-          const sesClient = new SESClient(clientConfig);
-          const [quota, identities] = await Promise.all([
-            sesClient.send(new GetSendQuotaCommand({})),
-            sesClient.send(new ListIdentitiesCommand({ IdentityType: 'Domain', MaxItems: 10 })),
-          ]);
-          return { quota, identities };
-        })(),
-        (async () => {
-          const iamClient = new IAMClient(clientConfig);
-          const users = await iamClient.send(new ListUsersCommand({ MaxItems: 10 }));
-          return users;
-        })(),
-      ]);
+        // Step 2: Try SES access (parallel)
+        let hasSESPolicy = false;
+        let sesLimits: AWSCredential['sesLimits'] = null;
+        let sesDomains: string[] | null = null;
 
-      if (sesResult.status === 'fulfilled') {
-        hasSESPolicy = true;
-        const { quota, identities } = sesResult.value;
-        sesLimits = {
-          maxSendRate: quota.MaxSendRate ?? 0,
-          max24HourSend: quota.Max24HourSend ?? 0,
-          sentLast24Hours: quota.SentLast24Hours ?? 0,
-        };
-        sesDomains = identities.Identities ?? [];
+        // Step 3: Try IAM access (parallel)
+        let hasIAMPolicy = false;
+        let iamUsers: string[] = [];
+
+        const [sesResult, iamResult] = await Promise.allSettled([
+          (async () => {
+            const sesClient = new SESClient(clientConfig);
+            const [quota, identities] = await Promise.all([
+              sesClient.send(new GetSendQuotaCommand({}), { abortSignal: signal }),
+              sesClient.send(new ListIdentitiesCommand({ IdentityType: 'Domain', MaxItems: 10 }), { abortSignal: signal }),
+            ]);
+            return { quota, identities };
+          })(),
+          (async () => {
+            const iamClient = new IAMClient(clientConfig);
+            const users = await iamClient.send(new ListUsersCommand({ MaxItems: 10 }), { abortSignal: signal });
+            return users;
+          })(),
+        ]);
+
+        if (sesResult.status === 'fulfilled') {
+          hasSESPolicy = true;
+          const { quota, identities } = sesResult.value;
+          sesLimits = {
+            maxSendRate: quota.MaxSendRate ?? 0,
+            max24HourSend: quota.Max24HourSend ?? 0,
+            sentLast24Hours: quota.SentLast24Hours ?? 0,
+          };
+          sesDomains = identities.Identities ?? [];
+        }
+
+        if (iamResult.status === 'fulfilled') {
+          hasIAMPolicy = true;
+          iamUsers = (iamResult.value.Users ?? [])
+            .map(u => u.UserName ?? '')
+            .filter(Boolean);
+        }
+
+        setCredentials(prev =>
+          prev.map(c =>
+            c.id === cred.id
+              ? {
+                  ...c,
+                  status: 'valid',
+                  region,
+                  accountId,
+                  userArn,
+                  hasSESPolicy,
+                  hasIAMPolicy,
+                  sesLimits,
+                  sesDomains,
+                  iamUsers,
+                  canCreateIAM: hasIAMPolicy,
+                  checkedAt: new Date().toISOString(),
+                }
+              : c
+          )
+        );
+
+        const regionNote = cred.region === 'auto' ? ` (${region})` : '';
+        toast.success(`AWS verified — Account: ${accountId}${regionNote}`);
+        return; // Success, stop trying regions
+      } catch (err: any) {
+        // If aborted, don't try next region
+        if (signal?.aborted) return;
+
+        // If this was the only region, mark as invalid
+        if (tryRegions.length === 1) {
+          const message = mapAwsError(err);
+          setCredentials(prev =>
+            prev.map(c =>
+              c.id === cred.id ? { ...c, status: 'invalid', error: message } : c
+            )
+          );
+          toast.error(`AWS: ${message}`);
+        }
+        // If auto-region and this region failed, try the next one silently
       }
+    }
 
-      if (iamResult.status === 'fulfilled') {
-        hasIAMPolicy = true;
-        iamUsers = (iamResult.value.Users ?? [])
-          .map(u => u.UserName ?? '')
-          .filter(Boolean);
-      }
-
+    // If all regions failed in auto mode
+    if (cred.region === 'auto') {
       setCredentials(prev =>
         prev.map(c =>
-          c.id === cred.id
-            ? {
-                ...c,
-                status: 'valid',
-                accountId,
-                userArn,
-                hasSESPolicy,
-                hasIAMPolicy,
-                sesLimits,
-                sesDomains,
-                iamUsers,
-                canCreateIAM: hasIAMPolicy,
-                checkedAt: new Date().toISOString(),
-              }
-            : c
+          c.id === cred.id ? { ...c, status: 'invalid', error: 'Invalid credentials (all regions tried)' } : c
         )
       );
-
-      toast.success(`AWS verified — Account: ${accountId}`);
-    } catch (err: any) {
-      const message = mapAwsError(err);
-      setCredentials(prev =>
-        prev.map(c =>
-          c.id === cred.id ? { ...c, status: 'invalid', error: message } : c
-        )
-      );
-      toast.error(`AWS: ${message}`);
+      toast.error('AWS: Invalid credentials (all regions tried)');
     }
   };
 
@@ -226,19 +254,31 @@ export default function AWSCredentialChecker() {
       return;
     }
 
+    abortRef.current = new AbortController();
     setIsChecking(true);
     setProgress(0);
 
     for (let i = 0; i < pending.length; i++) {
-      await checkAWS(pending[i]);
+      if (abortRef.current.signal.aborted) break;
+      await checkAWS(pending[i], abortRef.current.signal);
       setProgress(((i + 1) / pending.length) * 100);
     }
 
     setIsChecking(false);
+    abortRef.current = null;
     toast.success('Bulk check completed');
   };
 
+  const stopCheck = () => {
+    if (abortRef.current) {
+      abortRef.current.abort();
+      setIsChecking(false);
+      toast.info('Check stopped');
+    }
+  };
+
   const clearAll = () => {
+    stopCheck();
     setCredentials([]);
     sessionStorage.removeItem('aws_credentials');
     toast.info('All credentials cleared');
@@ -323,6 +363,7 @@ export default function AWSCredentialChecker() {
                 onChange={(e) => setDefaultRegion(e.target.value)}
                 className="w-full mt-1 bg-slate-900 border border-slate-700 rounded-md px-3 py-2 text-white"
               >
+                <option value="auto">Auto-detect region</option>
                 {regions.map(r => <option key={r} value={r}>{r}</option>)}
               </select>
             </div>
@@ -347,6 +388,12 @@ export default function AWSCredentialChecker() {
               {isChecking ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Play className="w-4 h-4 mr-2" />}
               Check All
             </Button>
+            {isChecking && (
+              <Button onClick={stopCheck} className="bg-red-600 hover:bg-red-700">
+                <Square className="w-4 h-4 mr-2" />
+                Stop
+              </Button>
+            )}
             <Button onClick={clearAll} variant="destructive">
               <Trash2 className="w-4 h-4 mr-2" />
               Clear All
