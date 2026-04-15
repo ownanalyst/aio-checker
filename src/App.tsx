@@ -1,21 +1,25 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { 
-  Cloud, 
-  MessageSquare, 
-  Phone, 
-  Mail, 
-  Send, 
-  Shield, 
+import { Progress } from '@/components/ui/progress';
+import {
+  Cloud,
+  MessageSquare,
+  Phone,
+  Mail,
+  Send,
+  Shield,
   CheckCircle,
   Server,
   Key,
   Lock,
   Globe,
   Zap,
-  Mail as MailIcon
+  Mail as MailIcon,
+  Loader2,
+  X,
+  Users
 } from 'lucide-react';
 import AWSCredentialChecker from './sections/AWSCredentialChecker';
 import TwilioChecker from './sections/TwilioChecker';
@@ -24,9 +28,59 @@ import SMTPChecker from './sections/SMTPChecker';
 import SendGridChecker from './sections/SendGridChecker';
 import BrevoChecker from './sections/BrevoChecker';
 import MailgunChecker from './sections/MailgunChecker';
+import { CheckerProvider, useCheckerStatus } from './context/CheckerContext';
 
-function App() {
+function GlobalCheckerIndicator() {
+  const { activeCheckers } = useCheckerStatus();
+
+  if (activeCheckers.length === 0) return null;
+
+  return (
+    <div className="fixed bottom-4 right-4 z-50 space-y-2 max-w-sm">
+      {activeCheckers.map(checker => (
+        <div key={checker.name} className="bg-slate-800/95 backdrop-blur-md border border-indigo-500/50 rounded-lg p-3 shadow-xl shadow-indigo-500/10">
+          <div className="flex items-center gap-2 mb-2">
+            <Loader2 className="w-4 h-4 text-indigo-400 animate-spin" />
+            <span className="text-sm font-medium text-white">{checker.name}</span>
+            <span className="text-xs text-slate-400 ml-auto">{Math.round(checker.progress)}%</span>
+          </div>
+          <Progress value={checker.progress} className="h-1.5" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function useHeartbeat() {
+  const [online, setOnline] = useState(1);
+  const userIdRef = useRef<string>(`user-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+
+  useEffect(() => {
+    const sendHeartbeat = async () => {
+      try {
+        const res = await fetch('/api/heartbeat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: userIdRef.current }),
+        });
+        const data = await res.json();
+        setOnline(data.online);
+      } catch {
+        // Backend not running, show 1 (self only)
+      }
+    };
+
+    sendHeartbeat();
+    const interval = setInterval(sendHeartbeat, 15000);
+    return () => clearInterval(interval);
+  }, []);
+
+  return online;
+}
+
+function AppContent() {
   const [activeTab, setActiveTab] = useState('aws');
+  const onlineCount = useHeartbeat();
 
   const services = [
     {
@@ -106,6 +160,10 @@ function App() {
               <Badge variant="outline" className="border-green-500/50 text-green-400 bg-green-500/10">
                 <CheckCircle className="w-3 h-3 mr-1" />
                 Session Based
+              </Badge>
+              <Badge variant="outline" className="border-cyan-500/50 text-cyan-400 bg-cyan-500/10">
+                <Users className="w-3 h-3 mr-1" />
+                {onlineCount} online
               </Badge>
             </div>
           </div>
@@ -238,8 +296,17 @@ function App() {
           </div>
         </div>
       </footer>
+
+      {/* Global Checker Status Indicator */}
+      <GlobalCheckerIndicator />
     </div>
   );
 }
 
-export default App;
+export default function App() {
+  return (
+    <CheckerProvider>
+      <AppContent />
+    </CheckerProvider>
+  );
+}

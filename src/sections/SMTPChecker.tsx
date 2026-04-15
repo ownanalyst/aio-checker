@@ -5,13 +5,13 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
-import { 
-  Table, 
-  TableBody, 
-  TableCell, 
-  TableHead, 
-  TableHeader, 
-  TableRow 
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow
 } from '@/components/ui/table';
 import {
   Mail,
@@ -34,6 +34,7 @@ import {
   Square
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { useCheckerStatus } from '@/context/CheckerContext';
 
 interface SMTPServer {
   id: string;
@@ -51,6 +52,7 @@ interface SMTPServer {
 }
 
 export default function SMTPChecker() {
+  const { setCheckerStatus } = useCheckerStatus();
   const [servers, setServers] = useState<SMTPServer[]>(() => {
     const saved = sessionStorage.getItem('smtp_servers');
     return saved ? JSON.parse(saved) : [];
@@ -99,10 +101,16 @@ export default function SMTPChecker() {
       toast.warning(`${skipped} line(s) skipped — format: host|port|username|password`);
     }
 
-    setServers(prev => [...prev, ...newServers]);
+    // Cap at 500 per batch
+    const capped = newServers.slice(0, 500);
+    if (newServers.length > 500) {
+      toast.warning(`Capped at 500 servers. ${newServers.length - 500} were not added.`);
+    }
+
+    setServers(prev => [...prev, ...capped]);
     setBulkInput('');
-    if (newServers.length > 0) {
-      toast.success(`Added ${newServers.length} SMTP server(s)`);
+    if (capped.length > 0) {
+      toast.success(`Added ${capped.length} SMTP server(s)`);
     }
   };
 
@@ -164,17 +172,26 @@ export default function SMTPChecker() {
       return;
     }
 
+    if (pending.length > 500) {
+      toast.error(`Maximum 500 servers per batch. You have ${pending.length}. Please split into smaller batches.`);
+      return;
+    }
+
     abortRef.current = new AbortController();
     setIsChecking(true);
     setProgress(0);
+    setCheckerStatus('SMTP', true, 0);
 
     for (let i = 0; i < pending.length; i++) {
       if (abortRef.current.signal.aborted) break;
       await checkSMTP(pending[i]);
-      setProgress(((i + 1) / pending.length) * 100);
+      const p = ((i + 1) / pending.length) * 100;
+      setProgress(p);
+      setCheckerStatus('SMTP', true, p);
     }
 
     setIsChecking(false);
+    setCheckerStatus('SMTP', false, 100);
     abortRef.current = null;
     toast.success('Bulk SMTP check completed');
   };
@@ -223,6 +240,26 @@ export default function SMTPChecker() {
     a.click();
     URL.revokeObjectURL(url);
     toast.success('Results exported');
+  };
+
+  const exportTxt = () => {
+    if (servers.length === 0) {
+      toast.info('No data to export');
+      return;
+    }
+
+    const lines = servers
+      .filter(s => s.status === 'valid' || s.status === 'invalid')
+      .map(s => `${s.host}|${s.port}|${s.username}|${s.password}`);
+
+    const blob = new Blob([lines.join('\n')], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `smtp-results-${new Date().toISOString().split('T')[0]}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast.success(`${lines.length} result(s) exported as TXT`);
   };
 
   const getStatusBadge = (status: string) => {
@@ -384,6 +421,10 @@ export default function SMTPChecker() {
             <Button onClick={exportResults} variant="outline" className="border-slate-600">
               <Download className="w-4 h-4 mr-2" />
               Export CSV
+            </Button>
+            <Button onClick={exportTxt} variant="outline" className="border-slate-600">
+              <Download className="w-4 h-4 mr-2" />
+              Export TXT
             </Button>
           </div>
 

@@ -35,6 +35,7 @@ import { toast } from 'sonner';
 import { STSClient, GetCallerIdentityCommand } from '@aws-sdk/client-sts';
 import { SESClient, GetSendQuotaCommand, ListIdentitiesCommand } from '@aws-sdk/client-ses';
 import { IAMClient, ListUsersCommand } from '@aws-sdk/client-iam';
+import { useCheckerStatus } from '@/context/CheckerContext';
 
 interface AWSCredential {
   id: string;
@@ -59,6 +60,7 @@ interface AWSCredential {
 }
 
 export default function AWSCredentialChecker() {
+  const { setCheckerStatus } = useCheckerStatus();
   const [credentials, setCredentials] = useState<AWSCredential[]>(() => {
     const saved = sessionStorage.getItem('aws_credentials');
     return saved ? JSON.parse(saved) : [];
@@ -86,15 +88,49 @@ export default function AWSCredentialChecker() {
     let skipped = 0;
 
     lines.forEach((line, index) => {
-      const parts = line.split(/[|,\s]+/).filter(Boolean);
+      // Split by pipe first, trim whitespace
+      const rawParts = line.split('|').map(p => p.trim()).filter(Boolean);
+
+      // Strip IP/path prefix (e.g., "176.31.82.212/.env" or "path/to/.env.example")
+      let parts = rawParts;
+      if (rawParts.length > 0 && rawParts[0].includes('/')) {
+        parts = rawParts.slice(1);
+      }
+
       if (parts.length >= 2) {
-        newCredentials.push({
-          id: `aws-${Date.now()}-${index}`,
-          accessKeyId: parts[0].trim(),
-          secretAccessKey: parts[1].trim(),
-          region: parts[2]?.trim() || defaultRegion,
-          status: 'pending'
-        });
+        // Handle KEY=VALUE format (e.g., AWS_ACCESS_KEY_ID=AKIA...)
+        const cleanValue = (v: string) => v.includes('=') ? v.split('=').slice(-1)[0].trim() : v.trim();
+
+        // Scan all parts for the actual access key (starts with AKIA or ASIA)
+        let accessKey = '';
+        let secretKey = '';
+        let region = defaultRegion;
+        for (const part of parts) {
+          const cleaned = cleanValue(part);
+          if ((cleaned.startsWith('AKIA') || cleaned.startsWith('ASIA')) && !accessKey) {
+            accessKey = cleaned;
+          } else if (cleaned && !cleaned.startsWith('AKIA') && !cleaned.startsWith('ASIA') && !cleaned.includes('aws') && !cleaned.includes('key') && !cleaned.includes('secret') && cleaned.length > 10) {
+            if (!secretKey) {
+              secretKey = cleaned;
+            }
+          }
+          // Check if part looks like a region
+          if (cleaned.match(/^[a-z]{2}-(east|west|north|south|central)-\d+$/)) {
+            region = cleaned;
+          }
+        }
+
+        if (accessKey && secretKey) {
+          newCredentials.push({
+            id: `aws-${Date.now()}-${index}`,
+            accessKeyId: accessKey,
+            secretAccessKey: secretKey,
+            region,
+            status: 'pending'
+          });
+        } else {
+          skipped++;
+        }
       } else {
         skipped++;
       }
@@ -104,10 +140,16 @@ export default function AWSCredentialChecker() {
       toast.warning(`${skipped} line(s) skipped — format: accessKey|secretKey|region`);
     }
 
-    setCredentials(prev => [...prev, ...newCredentials]);
+    // Cap at 500 per batch
+    const capped = newCredentials.slice(0, 500);
+    if (newCredentials.length > 500) {
+      toast.warning(`Capped at 500 credentials. ${newCredentials.length - 500} were not added.`);
+    }
+
+    setCredentials(prev => [...prev, ...capped]);
     setBulkInput('');
-    if (newCredentials.length > 0) {
-      toast.success(`Added ${newCredentials.length} credential(s)`);
+    if (capped.length > 0) {
+      toast.success(`Added ${capped.length} credential(s)`);
     }
   };
 
@@ -254,17 +296,26 @@ export default function AWSCredentialChecker() {
       return;
     }
 
+    if (pending.length > 500) {
+      toast.error(`Maximum 500 credentials per batch. You have ${pending.length}. Please split into smaller batches.`);
+      return;
+    }
+
     abortRef.current = new AbortController();
     setIsChecking(true);
     setProgress(0);
+    setCheckerStatus('AWS', true, 0);
 
     for (let i = 0; i < pending.length; i++) {
       if (abortRef.current.signal.aborted) break;
       await checkAWS(pending[i], abortRef.current.signal);
-      setProgress(((i + 1) / pending.length) * 100);
+      const p = ((i + 1) / pending.length) * 100;
+      setProgress(p);
+      setCheckerStatus('AWS', true, p);
     }
 
     setIsChecking(false);
+    setCheckerStatus('AWS', false, 100);
     abortRef.current = null;
     toast.success('Bulk check completed');
   };
@@ -322,6 +373,26 @@ export default function AWSCredentialChecker() {
     a.click();
     URL.revokeObjectURL(url);
     toast.success('Results exported');
+  };
+
+  const exportTxt = () => {
+    if (credentials.length === 0) {
+      toast.info('No data to export');
+      return;
+    }
+
+    const lines = credentials
+      .filter(c => c.status === 'valid' || c.status === 'invalid')
+      .map(c => `${c.accessKeyId}|${c.secretAccessKey}|${c.region}`);
+
+    const blob = new Blob([lines.join('\n')], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `aws-results-${new Date().toISOString().split('T')[0]}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast.success(`${lines.length} result(s) exported as TXT`);
   };
 
   const getStatusBadge = (status: string) => {
@@ -401,6 +472,10 @@ export default function AWSCredentialChecker() {
             <Button onClick={exportResults} variant="outline" className="border-slate-600">
               <Download className="w-4 h-4 mr-2" />
               Export CSV
+            </Button>
+            <Button onClick={exportTxt} variant="outline" className="border-slate-600">
+              <Download className="w-4 h-4 mr-2" />
+              Export TXT
             </Button>
           </div>
 

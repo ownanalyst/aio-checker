@@ -31,6 +31,7 @@ import {
   Square
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { useCheckerStatus } from '@/context/CheckerContext';
 
 interface TwilioAccount {
   id: string;
@@ -47,6 +48,7 @@ interface TwilioAccount {
 }
 
 export default function TwilioChecker() {
+  const { setCheckerStatus } = useCheckerStatus();
   const [accounts, setAccounts] = useState<TwilioAccount[]>(() => {
     const saved = sessionStorage.getItem('twilio_accounts');
     return saved ? JSON.parse(saved) : [];
@@ -66,14 +68,41 @@ export default function TwilioChecker() {
     let skipped = 0;
 
     lines.forEach((line, index) => {
-      const parts = line.split(/[|,\s]+/).filter(Boolean);
+      // Split by pipe first, trim whitespace
+      const rawParts = line.split('|').map(p => p.trim()).filter(Boolean);
+
+      // Strip IP/path prefix (e.g., "176.31.82.212/.env" or "path/to/.env.example")
+      let parts = rawParts;
+      if (rawParts.length > 0 && rawParts[0].includes('/')) {
+        parts = rawParts.slice(1);
+      }
+
       if (parts.length >= 2) {
-        newAccounts.push({
-          id: `twilio-${Date.now()}-${index}`,
-          accountSid: parts[0].trim(),
-          authToken: parts[1].trim(),
-          status: 'pending'
-        });
+        // Handle KEY=VALUE format (e.g., TWILIO_ACCOUNT_SID=AC...)
+        const cleanValue = (v: string) => v.includes('=') ? v.split('=').slice(-1)[0].trim() : v.trim();
+
+        // Scan all parts for the actual Account SID (starts with AC)
+        let accountSid = '';
+        let authToken = '';
+        for (const part of parts) {
+          const cleaned = cleanValue(part);
+          if (cleaned.startsWith('AC') && cleaned.length >= 34 && !accountSid) {
+            accountSid = cleaned;
+          } else if (cleaned && !cleaned.startsWith('AC') && !cleaned.includes('twilio') && !cleaned.includes('sid') && !cleaned.includes('token') && cleaned.length > 10) {
+            if (!authToken) authToken = cleaned;
+          }
+        }
+
+        if (accountSid && authToken) {
+          newAccounts.push({
+            id: `twilio-${Date.now()}-${index}`,
+            accountSid,
+            authToken,
+            status: 'pending'
+          });
+        } else {
+          skipped++;
+        }
       } else {
         skipped++;
       }
@@ -83,10 +112,16 @@ export default function TwilioChecker() {
       toast.warning(`${skipped} line(s) skipped — format: accountSid|authToken`);
     }
 
-    setAccounts(prev => [...prev, ...newAccounts]);
+    // Cap at 500 per batch
+    const capped = newAccounts.slice(0, 500);
+    if (newAccounts.length > 500) {
+      toast.warning(`Capped at 500 accounts. ${newAccounts.length - 500} were not added.`);
+    }
+
+    setAccounts(prev => [...prev, ...capped]);
     setBulkInput('');
-    if (newAccounts.length > 0) {
-      toast.success(`Added ${newAccounts.length} Twilio account(s)`);
+    if (capped.length > 0) {
+      toast.success(`Added ${capped.length} Twilio account(s)`);
     }
   };
 
@@ -153,17 +188,26 @@ export default function TwilioChecker() {
       return;
     }
 
+    if (pending.length > 500) {
+      toast.error(`Maximum 500 accounts per batch. You have ${pending.length}. Please split into smaller batches.`);
+      return;
+    }
+
     abortRef.current = new AbortController();
     setIsChecking(true);
     setProgress(0);
+    setCheckerStatus('Twilio', true, 0);
 
     for (let i = 0; i < pending.length; i++) {
       if (abortRef.current.signal.aborted) break;
       await checkTwilio(pending[i]);
-      setProgress(((i + 1) / pending.length) * 100);
+      const p = ((i + 1) / pending.length) * 100;
+      setProgress(p);
+      setCheckerStatus('Twilio', true, p);
     }
 
     setIsChecking(false);
+    setCheckerStatus('Twilio', false, 100);
     abortRef.current = null;
     toast.success('Bulk check completed');
   };
@@ -216,6 +260,26 @@ export default function TwilioChecker() {
     a.click();
     URL.revokeObjectURL(url);
     toast.success('Results exported');
+  };
+
+  const exportTxt = () => {
+    if (accounts.length === 0) {
+      toast.info('No data to export');
+      return;
+    }
+
+    const lines = accounts
+      .filter(a => a.status === 'valid' || a.status === 'invalid')
+      .map(a => `${a.accountSid}|${a.authToken}`);
+
+    const blob = new Blob([lines.join('\n')], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `twilio-results-${new Date().toISOString().split('T')[0]}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast.success(`${lines.length} result(s) exported as TXT`);
   };
 
   const getStatusBadge = (status: string) => {
@@ -338,6 +402,10 @@ export default function TwilioChecker() {
             <Button onClick={exportResults} variant="outline" className="border-slate-600">
               <Download className="w-4 h-4 mr-2" />
               Export CSV
+            </Button>
+            <Button onClick={exportTxt} variant="outline" className="border-slate-600">
+              <Download className="w-4 h-4 mr-2" />
+              Export TXT
             </Button>
           </div>
 

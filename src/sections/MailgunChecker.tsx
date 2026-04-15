@@ -5,13 +5,13 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
-import { 
-  Table, 
-  TableBody, 
-  TableCell, 
-  TableHead, 
-  TableHeader, 
-  TableRow 
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow
 } from '@/components/ui/table';
 import {
   Mail,
@@ -34,6 +34,7 @@ import {
   Square
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { useCheckerStatus } from '@/context/CheckerContext';
 
 interface MailgunAccount {
   id: string;
@@ -55,6 +56,7 @@ interface MailgunAccount {
 }
 
 export default function MailgunChecker() {
+  const { setCheckerStatus } = useCheckerStatus();
   const [accounts, setAccounts] = useState<MailgunAccount[]>(() => {
     const saved = sessionStorage.getItem('mailgun_accounts');
     return saved ? JSON.parse(saved) : [];
@@ -74,16 +76,36 @@ export default function MailgunChecker() {
     let skipped = 0;
 
     lines.forEach((line, index) => {
-      const parts = line.split(/[|,\s]+/).filter(Boolean);
-      if (parts.length >= 1) {
-        const apiKey = parts[0].trim();
-        const domain = parts[1]?.trim();
+      // Split by pipe first, trim whitespace
+      const rawParts = line.split('|').map(p => p.trim()).filter(Boolean);
 
-        if (apiKey && (apiKey.startsWith('key-') || apiKey.length > 20)) {
+      // Strip IP/path prefix (e.g., "176.31.82.212/.env" or "path/to/.env.example")
+      let parts = rawParts;
+      if (rawParts.length > 0 && rawParts[0].includes('/')) {
+        parts = rawParts.slice(1);
+      }
+
+      if (parts.length >= 1) {
+        // Handle KEY=VALUE format (e.g., MAILGUN_API_KEY=key-xxx)
+        const cleanValue = (v: string) => v.includes('=') ? v.split('=').slice(-1)[0].trim() : v.trim();
+
+        // Scan all parts for the actual API key (starts with key-)
+        let apiKey = '';
+        let domain: string | undefined;
+        for (const part of parts) {
+          const cleaned = cleanValue(part);
+          if (cleaned.startsWith('key-')) {
+            apiKey = cleaned;
+          } else if (cleaned && !cleaned.includes('mailgun') && !cleaned.includes('key') && cleaned.length > 3) {
+            domain = cleaned;
+          }
+        }
+
+        if (apiKey) {
           newAccounts.push({
             id: `mailgun-${Date.now()}-${index}`,
-            apiKey: apiKey,
-            domain: domain,
+            apiKey,
+            domain,
             status: 'pending'
           });
         } else {
@@ -98,10 +120,16 @@ export default function MailgunChecker() {
       toast.warning(`${skipped} line(s) skipped — format: key-xxxxxxx|domain`);
     }
 
-    setAccounts(prev => [...prev, ...newAccounts]);
+    // Cap at 500 per batch
+    const capped = newAccounts.slice(0, 500);
+    if (newAccounts.length > 500) {
+      toast.warning(`Capped at 500 API keys. ${newAccounts.length - 500} were not added.`);
+    }
+
+    setAccounts(prev => [...prev, ...capped]);
     setBulkInput('');
-    if (newAccounts.length > 0) {
-      toast.success(`Added ${newAccounts.length} Mailgun API key(s)`);
+    if (capped.length > 0) {
+      toast.success(`Added ${capped.length} Mailgun API key(s)`);
     }
   };
 
@@ -174,17 +202,26 @@ export default function MailgunChecker() {
       return;
     }
 
+    if (pending.length > 500) {
+      toast.error(`Maximum 500 API keys per batch. You have ${pending.length}. Please split into smaller batches.`);
+      return;
+    }
+
     abortRef.current = new AbortController();
     setIsChecking(true);
     setProgress(0);
+    setCheckerStatus('Mailgun', true, 0);
 
     for (let i = 0; i < pending.length; i++) {
       if (abortRef.current.signal.aborted) break;
       await checkMailgun(pending[i]);
-      setProgress(((i + 1) / pending.length) * 100);
+      const p = ((i + 1) / pending.length) * 100;
+      setProgress(p);
+      setCheckerStatus('Mailgun', true, p);
     }
 
     setIsChecking(false);
+    setCheckerStatus('Mailgun', false, 100);
     abortRef.current = null;
     toast.success('Bulk check completed');
   };
@@ -238,6 +275,26 @@ export default function MailgunChecker() {
     a.click();
     URL.revokeObjectURL(url);
     toast.success('Results exported');
+  };
+
+  const exportTxt = () => {
+    if (accounts.length === 0) {
+      toast.info('No data to export');
+      return;
+    }
+
+    const lines = accounts
+      .filter(a => a.status === 'valid' || a.status === 'invalid')
+      .map(a => `${a.apiKey}${a.domain ? '|' + a.domain : ''}`);
+
+    const blob = new Blob([lines.join('\n')], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `mailgun-results-${new Date().toISOString().split('T')[0]}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast.success(`${lines.length} result(s) exported as TXT`);
   };
 
   const getStatusBadge = (status: string) => {
@@ -360,6 +417,10 @@ export default function MailgunChecker() {
               <Download className="w-4 h-4 mr-2" />
               Export CSV
             </Button>
+            <Button onClick={exportTxt} variant="outline" className="border-slate-600">
+              <Download className="w-4 h-4 mr-2" />
+              Export TXT
+            </Button>
           </div>
 
           {isChecking && (
@@ -398,22 +459,24 @@ export default function MailgunChecker() {
                 <TableBody>
                   {accounts.map((account) => (
                     <TableRow key={account.id} className="border-slate-700">
-                      <TableCell className="font-mono text-slate-300">
-                        {account.apiKey.substring(0, 16)}...
+                      <TableCell className="font-mono text-slate-300 max-w-[160px]">
+                        <div className="truncate" title={account.apiKey}>
+                          {account.apiKey.substring(0, 16)}...
+                        </div>
                         {account.domain && (
-                          <div className="text-xs text-slate-500 mt-1">{account.domain}</div>
+                          <div className="text-xs text-slate-500 mt-1 truncate" title={account.domain}>{account.domain}</div>
                         )}
                       </TableCell>
-                      <TableCell>{getStatusBadge(account.status)}</TableCell>
-                      <TableCell>
+                      <TableCell className="whitespace-nowrap">{getStatusBadge(account.status)}</TableCell>
+                      <TableCell className="max-w-[180px]">
                         {account.accountName && (
                           <div className="space-y-1">
-                            <div className="text-slate-300 text-sm">{account.accountName}</div>
-                            <div className="text-slate-500 text-xs">{account.email}</div>
+                            <div className="text-slate-300 text-sm truncate" title={account.accountName}>{account.accountName}</div>
+                            <div className="text-slate-500 text-xs truncate" title={account.email}>{account.email}</div>
                           </div>
                         )}
                       </TableCell>
-                      <TableCell>
+                      <TableCell className="whitespace-nowrap">
                         {account.plan && (
                           <Badge className="bg-amber-500/20 text-amber-400 border-amber-500/50">
                             <CreditCard className="w-3 h-3 mr-1" />
@@ -421,7 +484,7 @@ export default function MailgunChecker() {
                           </Badge>
                         )}
                       </TableCell>
-                      <TableCell>
+                      <TableCell className="whitespace-nowrap">
                         {account.monthlyLimit !== undefined && (
                           <div className="space-y-1">
                             <Badge className="bg-emerald-500/20 text-emerald-400 border-emerald-500/50">
@@ -429,18 +492,18 @@ export default function MailgunChecker() {
                               {account.remainingMessages?.toLocaleString()} / {account.monthlyLimit?.toLocaleString()}
                             </Badge>
                             <div className="text-xs text-slate-500">
-                              {account.sentThisMonth?.toLocaleString()} sent this month
+                              {account.sentThisMonth?.toLocaleString()} sent
                             </div>
                           </div>
                         )}
                       </TableCell>
-                      <TableCell>
+                      <TableCell className="max-w-[200px]">
                         {account.domains && (
                           <div className="space-y-1">
-                            <div className="flex flex-wrap gap-1 max-w-[150px]">
+                            <div className="flex flex-wrap gap-1">
                               {account.domains.slice(0, 2).map((domain, i) => (
-                                <Badge key={i} variant="outline" className="border-slate-600 text-slate-400 text-xs">
-                                  <Globe className="w-3 h-3 mr-1" />
+                                <Badge key={i} variant="outline" className="border-slate-600 text-slate-400 text-xs max-w-[180px] truncate" title={domain}>
+                                  <Globe className="w-3 h-3 mr-1 flex-shrink-0" />
                                   {domain}
                                 </Badge>
                               ))}
@@ -458,7 +521,7 @@ export default function MailgunChecker() {
                           </div>
                         )}
                       </TableCell>
-                      <TableCell>
+                      <TableCell className="whitespace-nowrap">
                         <div className="flex flex-wrap gap-1">
                           {account.webhookCount !== undefined && (
                             <Badge variant="outline" className="border-slate-600 text-slate-400 text-xs">

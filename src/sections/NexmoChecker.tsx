@@ -32,6 +32,7 @@ import {
   Square
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { useCheckerStatus } from '@/context/CheckerContext';
 
 interface NexmoAccount {
   id: string;
@@ -50,6 +51,7 @@ interface NexmoAccount {
 }
 
 export default function NexmoChecker() {
+  const { setCheckerStatus } = useCheckerStatus();
   const [accounts, setAccounts] = useState<NexmoAccount[]>(() => {
     const saved = sessionStorage.getItem('nexmo_accounts');
     return saved ? JSON.parse(saved) : [];
@@ -69,14 +71,43 @@ export default function NexmoChecker() {
     let skipped = 0;
 
     lines.forEach((line, index) => {
-      const parts = line.split(/[|,\s]+/).filter(Boolean);
+      // Split by pipe first, trim whitespace
+      const rawParts = line.split('|').map(p => p.trim()).filter(Boolean);
+
+      // Strip IP/path prefix (e.g., "176.31.82.212/.env" or "path/to/.env.example")
+      let parts = rawParts;
+      if (rawParts.length > 0 && rawParts[0].includes('/')) {
+        parts = rawParts.slice(1);
+      }
+
       if (parts.length >= 2) {
-        newAccounts.push({
-          id: `nexmo-${Date.now()}-${index}`,
-          apiKey: parts[0].trim(),
-          apiSecret: parts[1].trim(),
-          status: 'pending'
-        });
+        // Handle KEY=VALUE format (e.g., NEXMO_KEY=abc...)
+        const cleanValue = (v: string) => v.includes('=') ? v.split('=').slice(-1)[0].trim() : v.trim();
+
+        // Scan all parts for the actual API key and secret
+        let apiKey = '';
+        let apiSecret = '';
+        for (const part of parts) {
+          const cleaned = cleanValue(part);
+          if (cleaned && !cleaned.includes('nexmo') && !cleaned.includes('key') && !cleaned.includes('secret') && cleaned.length >= 8) {
+            if (!apiKey) {
+              apiKey = cleaned;
+            } else if (!apiSecret) {
+              apiSecret = cleaned;
+            }
+          }
+        }
+
+        if (apiKey && apiSecret) {
+          newAccounts.push({
+            id: `nexmo-${Date.now()}-${index}`,
+            apiKey,
+            apiSecret,
+            status: 'pending'
+          });
+        } else {
+          skipped++;
+        }
       } else {
         skipped++;
       }
@@ -86,10 +117,16 @@ export default function NexmoChecker() {
       toast.warning(`${skipped} line(s) skipped — format: apiKey|apiSecret`);
     }
 
-    setAccounts(prev => [...prev, ...newAccounts]);
+    // Cap at 500 per batch
+    const capped = newAccounts.slice(0, 500);
+    if (newAccounts.length > 500) {
+      toast.warning(`Capped at 500 accounts. ${newAccounts.length - 500} were not added.`);
+    }
+
+    setAccounts(prev => [...prev, ...capped]);
     setBulkInput('');
-    if (newAccounts.length > 0) {
-      toast.success(`Added ${newAccounts.length} Nexmo account(s)`);
+    if (capped.length > 0) {
+      toast.success(`Added ${capped.length} Nexmo account(s)`);
     }
   };
 
@@ -155,17 +192,26 @@ export default function NexmoChecker() {
       return;
     }
 
+    if (pending.length > 500) {
+      toast.error(`Maximum 500 accounts per batch. You have ${pending.length}. Please split into smaller batches.`);
+      return;
+    }
+
     abortRef.current = new AbortController();
     setIsChecking(true);
     setProgress(0);
+    setCheckerStatus('Nexmo', true, 0);
 
     for (let i = 0; i < pending.length; i++) {
       if (abortRef.current.signal.aborted) break;
       await checkNexmo(pending[i]);
-      setProgress(((i + 1) / pending.length) * 100);
+      const p = ((i + 1) / pending.length) * 100;
+      setProgress(p);
+      setCheckerStatus('Nexmo', true, p);
     }
 
     setIsChecking(false);
+    setCheckerStatus('Nexmo', false, 100);
     abortRef.current = null;
     toast.success('Bulk check completed');
   };
@@ -219,6 +265,26 @@ export default function NexmoChecker() {
     a.click();
     URL.revokeObjectURL(url);
     toast.success('Results exported');
+  };
+
+  const exportTxt = () => {
+    if (accounts.length === 0) {
+      toast.info('No data to export');
+      return;
+    }
+
+    const lines = accounts
+      .filter(a => a.status === 'valid' || a.status === 'invalid')
+      .map(a => `${a.apiKey}|${a.apiSecret}`);
+
+    const blob = new Blob([lines.join('\n')], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `nexmo-results-${new Date().toISOString().split('T')[0]}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast.success(`${lines.length} result(s) exported as TXT`);
   };
 
   const getStatusBadge = (status: string) => {
@@ -341,6 +407,10 @@ export default function NexmoChecker() {
             <Button onClick={exportResults} variant="outline" className="border-slate-600">
               <Download className="w-4 h-4 mr-2" />
               Export CSV
+            </Button>
+            <Button onClick={exportTxt} variant="outline" className="border-slate-600">
+              <Download className="w-4 h-4 mr-2" />
+              Export TXT
             </Button>
           </div>
 

@@ -5,13 +5,13 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
-import { 
-  Table, 
-  TableBody, 
-  TableCell, 
-  TableHead, 
-  TableHeader, 
-  TableRow 
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow
 } from '@/components/ui/table';
 import {
   Mail,
@@ -33,6 +33,7 @@ import {
   Square
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { useCheckerStatus } from '@/context/CheckerContext';
 
 interface BrevoAccount {
   id: string;
@@ -56,6 +57,7 @@ interface BrevoAccount {
 }
 
 export default function BrevoChecker() {
+  const { setCheckerStatus } = useCheckerStatus();
   const [accounts, setAccounts] = useState<BrevoAccount[]>(() => {
     const saved = sessionStorage.getItem('brevo_accounts');
     return saved ? JSON.parse(saved) : [];
@@ -75,11 +77,30 @@ export default function BrevoChecker() {
     let skipped = 0;
 
     lines.forEach((line, index) => {
-      const apiKey = line.trim();
-      if (apiKey && (apiKey.startsWith('xkeysib-') || apiKey.length > 20)) {
+      // Split by pipe first, trim whitespace
+      const rawParts = line.split('|').map(p => p.trim()).filter(Boolean);
+
+      // Strip IP/path prefix (e.g., "176.31.82.212/.env" or "path/to/.env.example")
+      let parts = rawParts;
+      if (rawParts.length > 0 && rawParts[0].includes('/')) {
+        parts = rawParts.slice(1);
+      }
+
+      // Find the Brevo API key (starts with xkeysib-)
+      let apiKey = '';
+      for (const part of parts) {
+        // Handle KEY=VALUE format (e.g., BREVO_API_KEY=xkeysib-xxx)
+        const cleanValue = part.includes('=') ? part.split('=').slice(-1)[0].trim() : part.trim();
+        if (cleanValue.startsWith('xkeysib-')) {
+          apiKey = cleanValue;
+          break;
+        }
+      }
+
+      if (apiKey) {
         newAccounts.push({
           id: `brevo-${Date.now()}-${index}`,
-          apiKey: apiKey,
+          apiKey,
           status: 'pending'
         });
       } else {
@@ -91,10 +112,16 @@ export default function BrevoChecker() {
       toast.warning(`${skipped} line(s) skipped — format: xkeysib-xxxxxxx`);
     }
 
-    setAccounts(prev => [...prev, ...newAccounts]);
+    // Cap at 500 per batch
+    const capped = newAccounts.slice(0, 500);
+    if (newAccounts.length > 500) {
+      toast.warning(`Capped at 500 API keys. ${newAccounts.length - 500} were not added.`);
+    }
+
+    setAccounts(prev => [...prev, ...capped]);
     setBulkInput('');
-    if (newAccounts.length > 0) {
-      toast.success(`Added ${newAccounts.length} Brevo API key(s)`);
+    if (capped.length > 0) {
+      toast.success(`Added ${capped.length} Brevo API key(s)`);
     }
   };
 
@@ -164,17 +191,26 @@ export default function BrevoChecker() {
       return;
     }
 
+    if (pending.length > 500) {
+      toast.error(`Maximum 500 API keys per batch. You have ${pending.length}. Please split into smaller batches.`);
+      return;
+    }
+
     abortRef.current = new AbortController();
     setIsChecking(true);
     setProgress(0);
+    setCheckerStatus('Brevo', true, 0);
 
     for (let i = 0; i < pending.length; i++) {
       if (abortRef.current.signal.aborted) break;
       await checkBrevo(pending[i]);
-      setProgress(((i + 1) / pending.length) * 100);
+      const p = ((i + 1) / pending.length) * 100;
+      setProgress(p);
+      setCheckerStatus('Brevo', true, p);
     }
 
     setIsChecking(false);
+    setCheckerStatus('Brevo', false, 100);
     abortRef.current = null;
     toast.success('Bulk check completed');
   };
@@ -230,6 +266,26 @@ export default function BrevoChecker() {
     a.click();
     URL.revokeObjectURL(url);
     toast.success('Results exported');
+  };
+
+  const exportTxt = () => {
+    if (accounts.length === 0) {
+      toast.info('No data to export');
+      return;
+    }
+
+    const lines = accounts
+      .filter(a => a.status === 'valid' || a.status === 'invalid')
+      .map(a => a.apiKey);
+
+    const blob = new Blob([lines.join('\n')], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `brevo-results-${new Date().toISOString().split('T')[0]}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast.success(`${lines.length} result(s) exported as TXT`);
   };
 
   const getStatusBadge = (status: string) => {
@@ -351,6 +407,10 @@ export default function BrevoChecker() {
             <Button onClick={exportResults} variant="outline" className="border-slate-600">
               <Download className="w-4 h-4 mr-2" />
               Export CSV
+            </Button>
+            <Button onClick={exportTxt} variant="outline" className="border-slate-600">
+              <Download className="w-4 h-4 mr-2" />
+              Export TXT
             </Button>
           </div>
 
