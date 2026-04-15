@@ -19,7 +19,8 @@ import {
   Mail as MailIcon,
   Loader2,
   X,
-  Users
+  Users,
+  Github
 } from 'lucide-react';
 import AWSCredentialChecker from './sections/AWSCredentialChecker';
 import TwilioChecker from './sections/TwilioChecker';
@@ -165,6 +166,15 @@ function AppContent() {
                 <Users className="w-3 h-3 mr-1" />
                 {onlineCount} online
               </Badge>
+              <a
+                href="https://github.com/ownanalyst/aio-checker"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-slate-700/50 hover:bg-slate-700 border border-slate-600 text-slate-300 hover:text-white transition-colors text-sm"
+              >
+                <Github className="w-4 h-4" />
+                <span className="hidden sm:inline">GitHub</span>
+              </a>
             </div>
           </div>
         </div>
