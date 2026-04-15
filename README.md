@@ -44,7 +44,7 @@ Each service accepts bulk input. Paste multiple lines and click **Add**.
 
 **SMTP format** (supports `.env` leak format):
 ```
-176.31.82.212/.env | authsmtp.securemail.pro|587|noreply@domain.com|password
+authsmtp.securemail.pro|587|noreply@domain.com|password
 smtp.gmail.com|587|user@gmail.com|app-password
 ```
 
