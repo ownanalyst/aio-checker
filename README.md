@@ -42,7 +42,7 @@ The dashboard opens at `http://localhost:5173`.
 
 Each service accepts bulk input. Paste multiple lines and click **Add**.
 
-**SMTP format** (supports `.env` leak format):
+**SMTP format**:
 ```
 authsmtp.securemail.pro|587|noreply@domain.com|password
 smtp.gmail.com|587|user@gmail.com|app-password
