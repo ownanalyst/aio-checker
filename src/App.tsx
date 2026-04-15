@@ -9,7 +9,6 @@ import {
   Phone,
   Mail,
   Send,
-  Shield,
   CheckCircle,
   Server,
   Key,
@@ -148,9 +147,7 @@ function AppContent() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <div className="p-2 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-xl">
-                <Shield className="w-6 h-6 text-white" />
-              </div>
+              <img src="/logo.svg" alt="AIO Checker" className="w-10 h-10" />
               <div>
                 <h1 className="text-xl font-bold text-white">API Credential Checker</h1>
                 <p className="text-xs text-slate-400">Bulk validation dashboard for multiple services</p>
