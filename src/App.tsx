@@ -18,7 +18,6 @@ import {
   Zap,
   Mail as MailIcon,
   Loader2,
-  X,
   Users,
   Github
 } from 'lucide-react';
