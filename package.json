@@ -8,6 +8,9 @@
     "dev:server": "tsx watch server/index.ts",
     "dev:all": "concurrently \"npm run dev\" \"npm run dev:server\"",
     "build": "tsc -b && vite build",
+    "build:server": "tsc -p tsconfig.server.json",
+    "start:server": "tsx server/index.ts",
+    "start": "node dist-server/index.js",
     "lint": "eslint .",
     "preview": "vite preview"
   },
@@ -67,6 +70,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",
+    "@netlify/functions": "^5.2.0",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/node": "^24.10.1",

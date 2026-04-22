@@ -1,4 +1,10 @@
-import { createContext, useContext, useState, useCallback, type ReactNode } from 'react';
+import {
+  createContext,
+  useContext,
+  useState,
+  useCallback,
+  type ReactNode,
+} from "react";
 
 interface CheckerStatus {
   name: string;
@@ -8,7 +14,11 @@ interface CheckerStatus {
 
 interface CheckerContextType {
   activeCheckers: CheckerStatus[];
-  setCheckerStatus: (name: string, isChecking: boolean, progress: number) => void;
+  setCheckerStatus: (
+    name: string,
+    isChecking: boolean,
+    progress: number,
+  ) => void;
 }
 
 const CheckerContext = createContext<CheckerContextType | undefined>(undefined);
@@ -16,18 +26,21 @@ const CheckerContext = createContext<CheckerContextType | undefined>(undefined);
 export function CheckerProvider({ children }: { children: ReactNode }) {
   const [activeCheckers, setActiveCheckers] = useState<CheckerStatus[]>([]);
 
-  const setCheckerStatus = useCallback((name: string, isChecking: boolean, progress: number) => {
-    setActiveCheckers(prev => {
-      const existing = prev.find(c => c.name === name);
-      if (isChecking) {
-        if (existing) {
-          return prev.map(c => c.name === name ? { ...c, progress } : c);
+  const setCheckerStatus = useCallback(
+    (name: string, isChecking: boolean, progress: number) => {
+      setActiveCheckers((prev) => {
+        const existing = prev.find((c) => c.name === name);
+        if (isChecking) {
+          if (existing) {
+            return prev.map((c) => (c.name === name ? { ...c, progress } : c));
+          }
+          return [...prev, { name, progress, isChecking: true }];
         }
-        return [...prev, { name, progress, isChecking: true }];
-      }
-      return prev.filter(c => c.name !== name);
-    });
-  }, []);
+        return prev.filter((c) => c.name !== name);
+      });
+    },
+    [],
+  );
 
   return (
     <CheckerContext.Provider value={{ activeCheckers, setCheckerStatus }}>
@@ -36,8 +49,10 @@ export function CheckerProvider({ children }: { children: ReactNode }) {
   );
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useCheckerStatus() {
   const ctx = useContext(CheckerContext);
-  if (!ctx) throw new Error('useCheckerStatus must be used within CheckerProvider');
+  if (!ctx)
+    throw new Error("useCheckerStatus must be used within CheckerProvider");
   return ctx;
 }

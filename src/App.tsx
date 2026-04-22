@@ -1,8 +1,14 @@
-import { useState, useEffect, useRef } from 'react';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { Progress } from '@/components/ui/progress';
+import { useState, useEffect, useRef } from "react";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+} from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Progress } from "@/components/ui/progress";
 import {
   Cloud,
   MessageSquare,
@@ -18,16 +24,16 @@ import {
   Mail as MailIcon,
   Loader2,
   Users,
-  Github
-} from 'lucide-react';
-import AWSCredentialChecker from './sections/AWSCredentialChecker';
-import TwilioChecker from './sections/TwilioChecker';
-import NexmoChecker from './sections/NexmoChecker';
-import SMTPChecker from './sections/SMTPChecker';
-import SendGridChecker from './sections/SendGridChecker';
-import BrevoChecker from './sections/BrevoChecker';
-import MailgunChecker from './sections/MailgunChecker';
-import { CheckerProvider, useCheckerStatus } from './context/CheckerContext';
+  Github,
+} from "lucide-react";
+import AWSCredentialChecker from "./sections/AWSCredentialChecker";
+import TwilioChecker from "./sections/TwilioChecker";
+import NexmoChecker from "./sections/NexmoChecker";
+import SMTPChecker from "./sections/SMTPChecker";
+import SendGridChecker from "./sections/SendGridChecker";
+import BrevoChecker from "./sections/BrevoChecker";
+import MailgunChecker from "./sections/MailgunChecker";
+import { CheckerProvider, useCheckerStatus } from "./context/CheckerContext";
 
 function GlobalCheckerIndicator() {
   const { activeCheckers } = useCheckerStatus();
@@ -36,12 +42,19 @@ function GlobalCheckerIndicator() {
 
   return (
     <div className="fixed bottom-4 right-4 z-50 space-y-2 max-w-sm">
-      {activeCheckers.map(checker => (
-        <div key={checker.name} className="bg-slate-800/95 backdrop-blur-md border border-indigo-500/50 rounded-lg p-3 shadow-xl shadow-indigo-500/10">
+      {activeCheckers.map((checker) => (
+        <div
+          key={checker.name}
+          className="bg-slate-800/95 backdrop-blur-md border border-indigo-500/50 rounded-lg p-3 shadow-xl shadow-indigo-500/10"
+        >
           <div className="flex items-center gap-2 mb-2">
             <Loader2 className="w-4 h-4 text-indigo-400 animate-spin" />
-            <span className="text-sm font-medium text-white">{checker.name}</span>
-            <span className="text-xs text-slate-400 ml-auto">{Math.round(checker.progress)}%</span>
+            <span className="text-sm font-medium text-white">
+              {checker.name}
+            </span>
+            <span className="text-xs text-slate-400 ml-auto">
+              {Math.round(checker.progress)}%
+            </span>
           </div>
           <Progress value={checker.progress} className="h-1.5" />
         </div>
@@ -52,14 +65,19 @@ function GlobalCheckerIndicator() {
 
 function useHeartbeat() {
   const [online, setOnline] = useState(1);
-  const userIdRef = useRef<string>(`user-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  // Initialised lazily inside useEffect to avoid calling impure functions during render
+  const userIdRef = useRef<string | null>(null);
 
   useEffect(() => {
+    if (!userIdRef.current) {
+      userIdRef.current = `user-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    }
+
     const sendHeartbeat = async () => {
       try {
-        const res = await fetch('/api/heartbeat', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+        const res = await fetch("/api/heartbeat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ id: userIdRef.current }),
         });
         const data = await res.json();
@@ -78,66 +96,66 @@ function useHeartbeat() {
 }
 
 function AppContent() {
-  const [activeTab, setActiveTab] = useState('aws');
+  const [activeTab, setActiveTab] = useState("aws");
   const onlineCount = useHeartbeat();
 
   const services = [
     {
-      id: 'aws',
-      name: 'AWS',
+      id: "aws",
+      name: "AWS",
       icon: Cloud,
-      description: 'Check IAM, SES limits & domains',
-      color: 'bg-orange-500',
-      status: 'active'
+      description: "Check IAM, SES limits & domains",
+      color: "bg-orange-500",
+      status: "active",
     },
     {
-      id: 'twilio',
-      name: 'Twilio',
+      id: "twilio",
+      name: "Twilio",
       icon: MessageSquare,
-      description: 'Check account balance & status',
-      color: 'bg-red-500',
-      status: 'active'
+      description: "Check account balance & status",
+      color: "bg-red-500",
+      status: "active",
     },
     {
-      id: 'nexmo',
-      name: 'Nexmo/Vonage',
+      id: "nexmo",
+      name: "Nexmo/Vonage",
       icon: Phone,
-      description: 'Check balance & account info',
-      color: 'bg-blue-500',
-      status: 'active'
+      description: "Check balance & account info",
+      color: "bg-blue-500",
+      status: "active",
     },
     {
-      id: 'smtp',
-      name: 'SMTP Validator',
+      id: "smtp",
+      name: "SMTP Validator",
       icon: Mail,
-      description: 'Validate SMTP with TLS/SSL',
-      color: 'bg-green-500',
-      status: 'active'
+      description: "Validate SMTP with TLS/SSL",
+      color: "bg-green-500",
+      status: "active",
     },
     {
-      id: 'sendgrid',
-      name: 'SendGrid',
+      id: "sendgrid",
+      name: "SendGrid",
       icon: Send,
-      description: 'Check API key & account',
-      color: 'bg-cyan-500',
-      status: 'active'
+      description: "Check API key & account",
+      color: "bg-cyan-500",
+      status: "active",
     },
     {
-      id: 'brevo',
-      name: 'Brevo',
+      id: "brevo",
+      name: "Brevo",
       icon: Zap,
-      description: 'Check credits & contacts',
-      color: 'bg-violet-500',
-      status: 'active'
+      description: "Check credits & contacts",
+      color: "bg-violet-500",
+      status: "active",
     },
     {
-      id: 'mailgun',
-      name: 'Mailgun',
+      id: "mailgun",
+      name: "Mailgun",
       icon: MailIcon,
-      description: 'Check domains & limits',
-      color: 'bg-amber-500',
-      status: 'active'
-    }
+      description: "Check domains & limits",
+      color: "bg-amber-500",
+      status: "active",
+    },
   ];
 
   return (
@@ -149,16 +167,26 @@ function AppContent() {
             <div className="flex items-center gap-3">
               <img src="/logo.svg" alt="AIO Checker" className="w-10 h-10" />
               <div>
-                <h1 className="text-xl font-bold text-white">API Credential Checker</h1>
-                <p className="text-xs text-slate-400">Bulk validation dashboard for multiple services</p>
+                <h1 className="text-xl font-bold text-white">
+                  API Credential Checker
+                </h1>
+                <p className="text-xs text-slate-400">
+                  Bulk validation dashboard for multiple services
+                </p>
               </div>
             </div>
             <div className="flex items-center gap-2">
-              <Badge variant="outline" className="border-green-500/50 text-green-400 bg-green-500/10">
+              <Badge
+                variant="outline"
+                className="border-green-500/50 text-green-400 bg-green-500/10"
+              >
                 <CheckCircle className="w-3 h-3 mr-1" />
                 Session Based
               </Badge>
-              <Badge variant="outline" className="border-cyan-500/50 text-cyan-400 bg-cyan-500/10">
+              <Badge
+                variant="outline"
+                className="border-cyan-500/50 text-cyan-400 bg-cyan-500/10"
+              >
                 <Users className="w-3 h-3 mr-1" />
                 {onlineCount} online
               </Badge>
@@ -181,12 +209,12 @@ function AppContent() {
         {/* Service Overview Cards */}
         <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3 mb-8">
           {services.map((service) => (
-            <Card 
+            <Card
               key={service.id}
               className={`cursor-pointer transition-all duration-300 hover:scale-105 ${
-                activeTab === service.id 
-                  ? 'ring-2 ring-indigo-500 bg-slate-800/80' 
-                  : 'bg-slate-800/40 hover:bg-slate-800/60'
+                activeTab === service.id
+                  ? "ring-2 ring-indigo-500 bg-slate-800/80"
+                  : "bg-slate-800/40 hover:bg-slate-800/60"
               }`}
               onClick={() => setActiveTab(service.id)}
             >
@@ -196,8 +224,12 @@ function AppContent() {
                     <service.icon className="w-4 h-4 text-white" />
                   </div>
                   <div>
-                    <h3 className="font-semibold text-white text-xs">{service.name}</h3>
-                    <p className="text-[10px] text-slate-400 leading-tight">{service.description}</p>
+                    <h3 className="font-semibold text-white text-xs">
+                      {service.name}
+                    </h3>
+                    <p className="text-[10px] text-slate-400 leading-tight">
+                      {service.description}
+                    </p>
                   </div>
                 </div>
               </CardContent>
@@ -252,10 +284,13 @@ function AppContent() {
             <CardHeader>
               <div className="flex items-center gap-2">
                 <Key className="w-5 h-5 text-indigo-400" />
-                <CardTitle className="text-white text-lg">Session Based</CardTitle>
+                <CardTitle className="text-white text-lg">
+                  Session Based
+                </CardTitle>
               </div>
               <CardDescription className="text-slate-400">
-                Data persists during your session but clears automatically when you refresh the page for security.
+                Data persists during your session but clears automatically when
+                you refresh the page for security.
               </CardDescription>
             </CardHeader>
           </Card>
@@ -264,10 +299,13 @@ function AppContent() {
             <CardHeader>
               <div className="flex items-center gap-2">
                 <Server className="w-5 h-5 text-emerald-400" />
-                <CardTitle className="text-white text-lg">Bulk Operations</CardTitle>
+                <CardTitle className="text-white text-lg">
+                  Bulk Operations
+                </CardTitle>
               </div>
               <CardDescription className="text-slate-400">
-                Check multiple credentials simultaneously with real-time status updates and progress tracking.
+                Check multiple credentials simultaneously with real-time status
+                updates and progress tracking.
               </CardDescription>
             </CardHeader>
           </Card>
@@ -279,7 +317,8 @@ function AppContent() {
                 <CardTitle className="text-white text-lg">7 Services</CardTitle>
               </div>
               <CardDescription className="text-slate-400">
-                AWS, Twilio, Nexmo, SMTP, SendGrid, Brevo, and Mailgun all in one dashboard.
+                AWS, Twilio, Nexmo, SMTP, SendGrid, Brevo, and Mailgun all in
+                one dashboard.
               </CardDescription>
             </CardHeader>
           </Card>
@@ -294,7 +333,10 @@ function AppContent() {
               API Credential Checker Dashboard - Session-based storage
             </p>
             <div className="flex items-center gap-4">
-              <Badge variant="outline" className="border-slate-600 text-slate-400">
+              <Badge
+                variant="outline"
+                className="border-slate-600 text-slate-400"
+              >
                 <Lock className="w-3 h-3 mr-1" />
                 Client-Side Only
               </Badge>
